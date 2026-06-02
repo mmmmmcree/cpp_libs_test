@@ -8,7 +8,7 @@
       "hidden": true,
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "DEPS_BACKEND": "auto"
+        "DEPS_BACKEND": "conan"
       }
     },
     {

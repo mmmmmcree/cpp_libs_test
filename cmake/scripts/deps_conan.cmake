@@ -5,11 +5,100 @@
 # generated config dir to CMAKE_PREFIX_PATH so find_package(<name> CONFIG)
 # resolves to Conan-installed packages.
 #
-# Caveat: this uses Conan's *default* profile, which must already exist.
-# Set up once per machine: `conan profile detect`.
+# To avoid ABI mismatch between Conan-built libs and the consuming project,
+# we synthesize a Conan profile that mirrors the active CMake compiler
+# (instead of relying on the auto-detected default profile, which on MinGW
+# boxes tends to pick gcc even when the active CMake preset is MSVC/clang-cl).
+#
+# We still ensure a `default` profile exists, because Conan 2.x looks one up
+# as the build profile by default.
+
+function(_conan_ensure_default_profile CONAN_EXE)
+    execute_process(
+        COMMAND ${CONAN_EXE} config home
+        OUTPUT_VARIABLE _home
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _rc ERROR_QUIET
+    )
+    if(NOT _rc EQUAL 0)
+        return()
+    endif()
+    if(EXISTS "${_home}/profiles/default")
+        return()
+    endif()
+    message(STATUS "Conan: detecting default profile (first-time setup)")
+    execute_process(COMMAND ${CONAN_EXE} profile detect RESULT_VARIABLE _rc)
+    if(NOT _rc EQUAL 0)
+        message(FATAL_ERROR "conan profile detect failed (rc=${_rc})")
+    endif()
+endfunction()
+
+# Writes a Conan profile that matches the active CMake compiler.
+# Returns the profile path in OUT_PATH, or empty if compiler is unsupported.
+function(_conan_make_profile OUT_PATH)
+    if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
+        set(_os "Macos")
+    else()
+        set(_os "${CMAKE_HOST_SYSTEM_NAME}")
+    endif()
+
+    set(_lines "[settings]" "os=${_os}" "arch=x86_64")
+
+    if(MSVC)
+        # Both pure cl.exe and clang-cl take this branch (clang-cl produces
+        # MSVC-ABI binaries, so Conan should also build with msvc settings).
+        math(EXPR _msvc_ver "${MSVC_TOOLSET_VERSION} + 50")
+        # Clamp to the highest version commonly present in Conan's settings.yml
+        # so brand-new MSVC toolsets (e.g. VS Insiders) don't trip Conan's
+        # version validation. The actual compiler used is whatever's on PATH.
+        if(_msvc_ver GREATER 194)
+            set(_msvc_ver 194)
+        endif()
+        list(APPEND _lines
+            "compiler=msvc"
+            "compiler.version=${_msvc_ver}"
+            "compiler.runtime=dynamic"
+        )
+    elseif(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+        string(REGEX MATCH "^[0-9]+" _ver "${CMAKE_CXX_COMPILER_VERSION}")
+        list(APPEND _lines
+            "compiler=gcc"
+            "compiler.version=${_ver}"
+            "compiler.libcxx=libstdc++11"
+        )
+    elseif(CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+        string(REGEX MATCH "^[0-9]+" _ver "${CMAKE_CXX_COMPILER_VERSION}")
+        list(APPEND _lines
+            "compiler=clang"
+            "compiler.version=${_ver}"
+            "compiler.libcxx=libstdc++11"
+        )
+    else()
+        message(WARNING "Conan: unknown compiler ${CMAKE_CXX_COMPILER_ID}; "
+                        "using auto-detected default profile (ABI mismatch risk)")
+        set(${OUT_PATH} "" PARENT_SCOPE)
+        return()
+    endif()
+
+    # Mirror the project's C++ standard. Top-level CMakeLists must set
+    # CMAKE_CXX_STANDARD before install_dependencies() runs; if it doesn't,
+    # we omit cppstd and Conan falls back to its profile default.
+    if(CMAKE_CXX_STANDARD)
+        list(APPEND _lines "compiler.cppstd=${CMAKE_CXX_STANDARD}")
+    endif()
+
+    list(JOIN _lines "\n" _content)
+    set(_path "${CMAKE_BINARY_DIR}/_conan_aggregate/profile")
+    file(MAKE_DIRECTORY "${CMAKE_BINARY_DIR}/_conan_aggregate")
+    file(WRITE "${_path}" "${_content}\n")
+    set(${OUT_PATH} "${_path}" PARENT_SCOPE)
+endfunction()
 
 function(deps_install_conan DEPS_JSON)
     find_program(CONAN_EXE conan REQUIRED)
+
+    _conan_ensure_default_profile("${CONAN_EXE}")
+    _conan_make_profile(_profile)
 
     string(JSON _len LENGTH "${DEPS_JSON}" dependencies)
     math(EXPR _last "${_len} - 1")
@@ -32,15 +121,37 @@ function(deps_install_conan DEPS_JSON)
     file(MAKE_DIRECTORY "${_dir}")
     file(WRITE "${_dir}/conanfile.txt" "${_content}\n")
 
-    execute_process(
-        COMMAND ${CONAN_EXE} install "${_dir}"
-                --output-folder=${_install_dir}
-                --build=missing
-        RESULT_VARIABLE _rc
-    )
-    if(NOT _rc EQUAL 0)
-        message(FATAL_ERROR "conan install failed (rc=${_rc})")
+    get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(_is_multi)
+        set(_default_cfgs "Debug;Release")
+    elseif(CMAKE_BUILD_TYPE)
+        set(_default_cfgs "${CMAKE_BUILD_TYPE}")
+    else()
+        set(_default_cfgs "Release")
     endif()
+    set(DEPS_CONAN_BUILD_TYPES "${_default_cfgs}" CACHE STRING
+        "Build types to install via Conan (semicolon-separated)")
+
+    set(_profile_args "")
+    if(_profile)
+        set(_profile_args -pr:a "${_profile}")
+        message(STATUS "Conan: using profile matching CMake compiler -> ${_profile}")
+    endif()
+
+    foreach(_cfg IN LISTS DEPS_CONAN_BUILD_TYPES)
+        message(STATUS "Conan install: -s build_type=${_cfg}")
+        execute_process(
+            COMMAND ${CONAN_EXE} install "${_dir}"
+                    --output-folder=${_install_dir}
+                    --build=missing
+                    -s build_type=${_cfg}
+                    ${_profile_args}
+            RESULT_VARIABLE _rc
+        )
+        if(NOT _rc EQUAL 0)
+            message(FATAL_ERROR "conan install failed for ${_cfg} (rc=${_rc})")
+        endif()
+    endforeach()
 
     list(APPEND CMAKE_PREFIX_PATH "${_install_dir}")
     set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
