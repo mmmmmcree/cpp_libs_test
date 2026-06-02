@@ -1,11 +1,9 @@
 # deps_vcpkg.cmake — install dependencies via vcpkg manifest mode.
 #
-# Reads each dep's "name" (versions/git/fetch_target are ignored — vcpkg's
-# own port versioning takes precedence; pin via vcpkg-configuration.json
-# if you need a specific revision).
-#
-# Synthesizes ${CMAKE_BINARY_DIR}/_vcpkg_aggregate/vcpkg.json, runs vcpkg
-# install, prepends the install dir to CMAKE_PREFIX_PATH.
+# Reads each dep's "name" plus optional "version". When "version" is set, we
+# pin via vcpkg's overrides mechanism, which requires a `builtin-baseline`
+# (we synthesize it from VCPKG_ROOT's git HEAD). This keeps dependency.json
+# the single source of truth for cross-backend version pinning.
 
 function(deps_install_vcpkg DEPS_JSON)
     if(WIN32)
@@ -29,15 +27,52 @@ function(deps_install_vcpkg DEPS_JSON)
         endif()
     endif()
 
+    # Try to obtain a builtin-baseline from VCPKG_ROOT's git HEAD. Required
+    # any time we use overrides (which is whenever a dep specifies a version).
+    execute_process(
+        COMMAND git -C "$ENV{VCPKG_ROOT}" rev-parse HEAD
+        OUTPUT_VARIABLE _baseline
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        RESULT_VARIABLE _git_rc
+        ERROR_QUIET
+    )
+    if(NOT _git_rc EQUAL 0)
+        set(_baseline "")
+    endif()
+
     string(JSON _len LENGTH "${DEPS_JSON}" dependencies)
     math(EXPR _last "${_len} - 1")
-    set(_entries "")
+
+    set(_dep_entries "")
+    set(_override_entries "")
     foreach(_i RANGE 0 ${_last})
         string(JSON _name GET "${DEPS_JSON}" dependencies ${_i} name)
-        list(APPEND _entries "    \"${_name}\"")
+        string(JSON _ver  ERROR_VARIABLE _e GET "${DEPS_JSON}" dependencies ${_i} version)
+        list(APPEND _dep_entries "    \"${_name}\"")
+        if(NOT _e AND _ver)
+            if(_baseline)
+                list(APPEND _override_entries
+                    "    { \"name\": \"${_name}\", \"version\": \"${_ver}\" }")
+            else()
+                message(WARNING "vcpkg version pin ${_name}=${_ver} ignored: "
+                                "VCPKG_ROOT is not a git checkout (no baseline)")
+            endif()
+        endif()
     endforeach()
-    list(REMOVE_DUPLICATES _entries)
-    list(JOIN _entries ",\n" _block)
+    list(REMOVE_DUPLICATES _dep_entries)
+    list(JOIN _dep_entries ",\n" _deps_block)
+
+    set(_baseline_field "")
+    if(_baseline)
+        set(_baseline_field "  \"builtin-baseline\": \"${_baseline}\",\n")
+    endif()
+
+    set(_overrides_field "")
+    if(_override_entries)
+        list(REMOVE_DUPLICATES _override_entries)
+        list(JOIN _override_entries ",\n" _ovr_block)
+        set(_overrides_field ",\n  \"overrides\": [\n${_ovr_block}\n  ]")
+    endif()
 
     set(_dir "${CMAKE_BINARY_DIR}/_vcpkg_aggregate")
     file(MAKE_DIRECTORY "${_dir}")
@@ -45,9 +80,9 @@ function(deps_install_vcpkg DEPS_JSON)
 "{
   \"name\": \"aggregate\",
   \"version-string\": \"0.0.0\",
-  \"dependencies\": [
-${_block}
-  ]
+${_baseline_field}  \"dependencies\": [
+${_deps_block}
+  ]${_overrides_field}
 }
 ")
 

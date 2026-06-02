@@ -20,9 +20,6 @@ const char* actionName(efsw::Action action) {
 
 class FileWatcher::Listener final : public efsw::FileWatchListener {
 public:
-    // NOTE: matches the signature on efsw's git master branch (oldFilename
-    // is `const std::string&`). The release shipped by vcpkg uses
-    // `std::string` by value — see efsw_vcpkg/ for that variant.
     // Matches efsw 1.5.1 release API: oldFilename is `std::string` by value.
     void handleFileAction(efsw::WatchID         watchid,
                           const std::string&    dir,
