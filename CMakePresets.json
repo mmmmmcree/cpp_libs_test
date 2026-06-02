@@ -16,7 +16,6 @@
       "inherits": "_base",
       "displayName": "MSVC (Visual Studio, x64)",
       "description": "MSVC; subdirs that opt into vcpkg use the x64-windows triplet",
-      "generator": "Visual Studio 18 2026",
       "architecture": "x64",
       "cacheVariables": {
         "VCPKG_TARGET_TRIPLET": "x64-windows"
