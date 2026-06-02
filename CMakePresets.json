@@ -1,0 +1,64 @@
+{
+  "version": 3,
+  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+
+  "configurePresets": [
+    {
+      "name": "_base",
+      "hidden": true,
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "DEPS_BACKEND": "auto"
+      }
+    },
+    {
+      "name": "msvc",
+      "inherits": "_base",
+      "displayName": "MSVC (Visual Studio, x64)",
+      "description": "MSVC; subdirs that opt into vcpkg use the x64-windows triplet",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "cacheVariables": {
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "clang",
+      "inherits": "_base",
+      "displayName": "Clang-CL (Ninja Multi-Config, x64)",
+      "description": "Clang-CL via Ninja Multi-Config; vcpkg triplet x64-windows",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER":     "clang-cl",
+        "CMAKE_CXX_COMPILER":   "clang-cl",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      }
+    },
+    {
+      "name": "gcc",
+      "inherits": "_base",
+      "displayName": "GCC / MinGW (Ninja Multi-Config, x64)",
+      "description": "MinGW g++ via Ninja Multi-Config; vcpkg triplet x64-mingw-dynamic",
+      "generator": "Ninja Multi-Config",
+      "cacheVariables": {
+        "CMAKE_C_COMPILER":     "gcc",
+        "CMAKE_CXX_COMPILER":   "g++",
+        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"
+      }
+    }
+  ],
+
+  "buildPresets": [
+    { "name": "msvc-debug",           "configurePreset": "msvc",  "configuration": "Debug"          },
+    { "name": "msvc-release",         "configurePreset": "msvc",  "configuration": "Release"        },
+    { "name": "msvc-relwithdebinfo",  "configurePreset": "msvc",  "configuration": "RelWithDebInfo" },
+
+    { "name": "clang-debug",          "configurePreset": "clang", "configuration": "Debug"          },
+    { "name": "clang-release",        "configurePreset": "clang", "configuration": "Release"        },
+    { "name": "clang-relwithdebinfo", "configurePreset": "clang", "configuration": "RelWithDebInfo" },
+
+    { "name": "gcc-debug",            "configurePreset": "gcc",   "configuration": "Debug"          },
+    { "name": "gcc-release",          "configurePreset": "gcc",   "configuration": "Release"        },
+    { "name": "gcc-relwithdebinfo",   "configurePreset": "gcc",   "configuration": "RelWithDebInfo" }
+  ]
+}

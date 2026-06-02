@@ -1,0 +1,10 @@
+{
+  "dependencies": [
+    {
+      "name": "efsw",
+      "version": "1.5.1",
+      "git": "https://github.com/SpartanJ/efsw.git",
+      "fetch_target": "efsw-static"
+    }
+  ]
+}
