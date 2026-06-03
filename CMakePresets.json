@@ -8,41 +8,41 @@
       "hidden": true,
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
-        "DEPS_BACKEND": "auto"
+        "DEPS_BACKEND": "auto",
+        "DEPS_KEEP_SOURCES": "on"
       }
     },
     {
       "name": "msvc",
       "inherits": "_base",
       "displayName": "MSVC (Visual Studio, x64)",
-      "description": "MSVC; subdirs that opt into vcpkg use the x64-windows triplet",
-      "architecture": "x64",
+      "description": "MSVC via Ninja Multi-Config;",
+      "generator": "Ninja Multi-Config",
       "cacheVariables": {
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
+        "CMAKE_C_COMPILER":     "cl",
+        "CMAKE_CXX_COMPILER":   "cl"
       }
     },
     {
       "name": "clang",
       "inherits": "_base",
       "displayName": "Clang-CL (Ninja Multi-Config, x64)",
-      "description": "Clang-CL via Ninja Multi-Config; vcpkg triplet x64-windows",
+      "description": "Clang-CL via Ninja Multi-Config;",
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_C_COMPILER":     "clang-cl",
-        "CMAKE_CXX_COMPILER":   "clang-cl",
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
+        "CMAKE_CXX_COMPILER":   "clang-cl"
       }
     },
     {
       "name": "gcc",
       "inherits": "_base",
       "displayName": "GCC / MinGW (Ninja Multi-Config, x64)",
-      "description": "MinGW g++ via Ninja Multi-Config; vcpkg triplet x64-mingw-dynamic",
+      "description": "MinGW g++ via Ninja Multi-Config;",
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_C_COMPILER":     "gcc",
-        "CMAKE_CXX_COMPILER":   "g++",
-        "VCPKG_TARGET_TRIPLET": "x64-mingw-dynamic"
+        "CMAKE_CXX_COMPILER":   "g++"
       }
     }
   ],

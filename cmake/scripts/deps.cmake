@@ -16,6 +16,19 @@ include("${CMAKE_CURRENT_LIST_DIR}/deps_vcpkg.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/deps_conan.cmake")
 include("${CMAKE_CURRENT_LIST_DIR}/deps_fetch.cmake")
 
+# When ON, the vcpkg backend forces from-source rebuilds (no binary cache)
+# and keeps extracted port sources under build/<preset>/vcpkg_installed/
+# vcpkg/blds/. Lets you step into vcpkg-built libraries during debugging,
+# at the cost of compile time on first configure.
+#
+# Set from a preset (cacheVariables), the top-level CMakeLists (set(...) or
+# set(... CACHE ...) before include(deps)), or the command line
+# (-DDEPS_KEEP_SOURCES=ON). The conan/fetch backends ignore this flag
+# (FetchContent always has source; Conan keeps its own per-recipe cache).
+option(DEPS_KEEP_SOURCES
+    "Force from-source rebuilds and keep extracted port sources under the build dir (vcpkg backend)"
+    OFF)
+
 function(_deps_detect_backend OUT_VAR)
     if(DEFINED ENV{VCPKG_ROOT})
         if(WIN32)
