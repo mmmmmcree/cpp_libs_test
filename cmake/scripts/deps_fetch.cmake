@@ -12,11 +12,10 @@
 #   git_tag        optional override of version-as-tag
 #   fetch_target   optional, name of the upstream library target to alias
 #                  to ${name}::${name} (defaults to ${name})
+#   features       silently ignored (vcpkg-only concept)
 
 include(FetchContent)
 
-# Common upstream-CMakeLists options to suppress demos/tests/installs.
-# Best-effort; harmless on libraries that don't define these.
 set(BUILD_TESTING    OFF CACHE BOOL "" FORCE)
 set(BUILD_EXAMPLES   OFF CACHE BOOL "" FORCE)
 set(BUILD_TESTS      OFF CACHE BOOL "" FORCE)
@@ -55,7 +54,6 @@ function(deps_install_fetch DEPS_JSON)
         )
         FetchContent_MakeAvailable(${_name})
 
-        # Expose the uniform ${name}::${name} target.
         set(_alias "${_name}::${_name}")
         if(NOT TARGET ${_alias})
             if(TARGET ${_ftarget})
@@ -67,8 +65,6 @@ function(deps_install_fetch DEPS_JSON)
             endif()
         endif()
 
-        # Make find_package(${_name} CONFIG) succeed by writing a tiny
-        # redirect Config and pointing ${_name}_DIR at it.
         set(_pkg_dir "${_redirect_root}/${_name}")
         file(MAKE_DIRECTORY "${_pkg_dir}")
         file(WRITE "${_pkg_dir}/${_name}Config.cmake"

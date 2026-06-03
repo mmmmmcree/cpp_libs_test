@@ -1,12 +1,22 @@
-# deps.cmake — entry point.
-# Public API: deps_install("<json>")
-#   <json> is a JSON object: { "dependencies": [ { "name": "...", ... }, ... ] }
+# deps.cmake — entry point for dependency management.
+#
+# Public API (intended call order from the top-level CMakeLists):
+#
+#   add_subdir(<path>)              # register a module subdir
+#   add_subdir(<path>)
+#   ...
+#   install_dependencies()          # walk registered dirs, merge their
+#                                   # dependencies.json files, install via
+#                                   # vcpkg/conan/fetch backend, populate
+#                                   # CMAKE_PREFIX_PATH. Does NOT add_subdirectory.
+#   include(<config>)               # any cmake config that calls find_package
+#                                   # (window_config, profiling_config, ...)
+#   add_pending_subdirs()           # finally, run add_subdirectory() for each
+#                                   # registered dir
 #
 # Backend resolution (highest priority first):
 #   1. -DDEPS_BACKEND=<vcpkg|conan|fetch> on the command line
 #   2. cacheVariables in the active CMake preset
-#      (CMakePresets.json's _base sets DEPS_BACKEND=auto, individual presets
-#       may override with a concrete backend name)
 #   3. unset / "auto" -> environment detection in this order:
 #        a. vcpkg  — VCPKG_ROOT env var + vcpkg executable
 #        b. conan  — `conan` 2.x on PATH
@@ -19,15 +29,14 @@ include("${CMAKE_CURRENT_LIST_DIR}/deps_fetch.cmake")
 # When ON, the vcpkg backend forces from-source rebuilds (no binary cache)
 # and keeps extracted port sources under build/<preset>/vcpkg_installed/
 # vcpkg/blds/. Lets you step into vcpkg-built libraries during debugging,
-# at the cost of compile time on first configure.
-#
-# Set from a preset (cacheVariables), the top-level CMakeLists (set(...) or
-# set(... CACHE ...) before include(deps)), or the command line
-# (-DDEPS_KEEP_SOURCES=ON). The conan/fetch backends ignore this flag
-# (FetchContent always has source; Conan keeps its own per-recipe cache).
+# at the cost of compile time on first configure. Conan/fetch ignore.
 option(DEPS_KEEP_SOURCES
     "Force from-source rebuilds and keep extracted port sources under the build dir (vcpkg backend)"
     OFF)
+
+function(add_subdir PATH)
+    set_property(GLOBAL APPEND PROPERTY _PROJECT_PENDING_SUBDIRS "${PATH}")
+endfunction()
 
 function(_deps_detect_backend OUT_VAR)
     if(DEFINED ENV{VCPKG_ROOT})
@@ -56,13 +65,12 @@ function(_deps_detect_backend OUT_VAR)
     set(${OUT_VAR} "fetch" PARENT_SCOPE)
 endfunction()
 
-function(deps_install DEPS_JSON)
+function(_deps_dispatch DEPS_JSON)
     string(JSON _len ERROR_VARIABLE _err LENGTH "${DEPS_JSON}" dependencies)
     if(_err OR _len EQUAL 0)
         return()
     endif()
 
-    # Treat unset and the explicit "auto" sentinel the same: run detection.
     if(NOT DEPS_BACKEND OR DEPS_BACKEND STREQUAL "auto")
         _deps_detect_backend(_detected)
         set(DEPS_BACKEND "${_detected}" CACHE STRING
@@ -82,18 +90,16 @@ function(deps_install DEPS_JSON)
         message(FATAL_ERROR "Unknown DEPS_BACKEND: ${DEPS_BACKEND}")
     endif()
 
-    # Propagate any CMAKE_PREFIX_PATH update from the backend.
     set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
+    set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
 endfunction()
 
-
-
 # install_dependencies()
-# 1. Walks each subdir registered via add_subdir(), recursively finds every
-#    dependencies.json under it.
-# 2. Merges their "dependencies" arrays (dedup by name).
-# 3. Calls deps_install() which dispatches to vcpkg / conan / fetch.
-# 4. Performs the real add_subdirectory() for each registered subdir.
+#   1. Walks each subdir registered via add_subdir(), recursively finds every
+#      dependencies.json under it.
+#   2. Merges their "dependencies" arrays (dedup by name).
+#   3. Calls the active backend (vcpkg/conan/fetch).
+# Does NOT call add_subdirectory — that's add_pending_subdirs()'s job.
 function(install_dependencies)
     get_property(_dirs GLOBAL PROPERTY _PROJECT_PENDING_SUBDIRS)
     if(NOT _dirs)
@@ -129,8 +135,21 @@ function(install_dependencies)
         endforeach()
     endforeach()
 
-    deps_install("{\"dependencies\":[${_deps_inline}]}")
+    _deps_dispatch("{\"dependencies\":[${_deps_inline}]}")
 
+    # Propagate CMAKE_PREFIX_PATH / CMAKE_MODULE_PATH updates from backend
+    # through the function-scope chain to the caller.
+    set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
+    set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
+endfunction()
+
+# add_pending_subdirs()
+#   Runs add_subdirectory() for each path registered via add_subdir().
+#   Call this AFTER install_dependencies() and AFTER any include(<config>) that
+#   calls find_package — so module CMakeLists see fully-resolved deps and
+#   shared interface targets.
+function(add_pending_subdirs)
+    get_property(_dirs GLOBAL PROPERTY _PROJECT_PENDING_SUBDIRS)
     foreach(_d IN LISTS _dirs)
         add_subdirectory(${_d})
     endforeach()

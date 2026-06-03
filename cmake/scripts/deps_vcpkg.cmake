@@ -1,9 +1,10 @@
 # deps_vcpkg.cmake — install dependencies via vcpkg manifest mode.
 #
-# Reads each dep's "name" plus optional "version". When "version" is set, we
-# pin via vcpkg's overrides mechanism, which requires a `builtin-baseline`
-# (synthesized from the active vcpkg's HEAD/embeddedsha). This keeps
-# dependency.json the single source of truth for cross-backend version pinning.
+# Reads each dep's "name" plus optional "version" and "features". When
+# "version" is set, we pin via vcpkg's overrides (which requires a
+# `builtin-baseline`, synthesized from the active vcpkg's HEAD/embeddedsha).
+# When "features" is set, those port-features are forwarded into the
+# synthesized vcpkg.json's dependency entry.
 #
 # Structure: all platform/compiler/env-specific routing lives in the private
 # helpers below. The public deps_install_vcpkg() consumes only normalized
@@ -38,9 +39,6 @@ function(_vcpkg_locate_root OUT_VAR)
     endif()
 
     if(WIN32)
-        # User scope first (personal override beats system-wide), then
-        # Machine scope. Both are registry-backed and immune to VS Dev Cmd's
-        # process-env modifications.
         foreach(_scope IN ITEMS User Machine)
             execute_process(
                 COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command
@@ -81,8 +79,6 @@ function(_vcpkg_locate_root OUT_VAR)
     set(${OUT_VAR} "" PARENT_SCOPE)
 endfunction()
 
-# Pick a default vcpkg triplet from the active CMake compiler / OS. Honors a
-# user-supplied VCPKG_TARGET_TRIPLET (cache var or -D) by short-circuiting.
 function(_vcpkg_default_triplet OUT_VAR)
     if(MINGW OR (CMAKE_CXX_COMPILER_ID STREQUAL "GNU" AND WIN32))
         set(${OUT_VAR} "x64-mingw-dynamic" PARENT_SCOPE)
@@ -95,10 +91,7 @@ function(_vcpkg_default_triplet OUT_VAR)
     endif()
 endfunction()
 
-# Resolve the baseline SHA for VCPKG_ROOT_DIR.
-#   1. `git rev-parse HEAD` if git is on PATH.
-#   2. Read .git/HEAD directly (no git binary needed).
-#   3. VS-bundled vcpkg: read `embeddedsha` from vcpkg-bundle.json.
+# Resolve baseline SHA: git rev-parse → vcpkg-bundle.json embeddedsha → .git/HEAD.
 function(_vcpkg_read_baseline VCPKG_ROOT_DIR OUT_VAR)
     set(${OUT_VAR} "" PARENT_SCOPE)
 
@@ -154,6 +147,35 @@ function(_vcpkg_read_baseline VCPKG_ROOT_DIR OUT_VAR)
     endif()
 endfunction()
 
+# Render a single dependency JSON entry. Strings if no features; otherwise
+# an object form { "name": "...", "features": [ "...", ... ] }.
+function(_vcpkg_render_dep_entry DEPS_JSON INDEX OUT_VAR)
+    string(JSON _name GET "${DEPS_JSON}" dependencies ${INDEX} name)
+    string(JSON _feats_arr ERROR_VARIABLE _e_feat
+           GET "${DEPS_JSON}" dependencies ${INDEX} features)
+    if(_e_feat)
+        set(${OUT_VAR} "    \"${_name}\"" PARENT_SCOPE)
+        return()
+    endif()
+
+    string(JSON _f_count LENGTH "${_feats_arr}")
+    if(_f_count EQUAL 0)
+        set(${OUT_VAR} "    \"${_name}\"" PARENT_SCOPE)
+        return()
+    endif()
+
+    math(EXPR _f_last "${_f_count} - 1")
+    set(_feats "")
+    foreach(_fi RANGE 0 ${_f_last})
+        string(JSON _f GET "${_feats_arr}" ${_fi})
+        list(APPEND _feats "\"${_f}\"")
+    endforeach()
+    list(JOIN _feats ", " _feats_csv)
+    set(${OUT_VAR}
+        "    { \"name\": \"${_name}\", \"features\": [ ${_feats_csv} ] }"
+        PARENT_SCOPE)
+endfunction()
+
 # --- Main: from here on, only normalized variables are used. -----------------
 
 function(deps_install_vcpkg DEPS_JSON)
@@ -165,7 +187,7 @@ function(deps_install_vcpkg DEPS_JSON)
             "VCPKG_ROOT (User-scope on Windows so it survives VS Dev Cmd), "
             "or pass -DVCPKG_ROOT_OVERRIDE=<path>.")
     endif()
-    set(ENV{VCPKG_ROOT} "${VCPKG_ROOT_DIR}") # downstream tools see the resolved one
+    set(ENV{VCPKG_ROOT} "${VCPKG_ROOT_DIR}")
 
     if(NOT VCPKG_TARGET_TRIPLET)
         _vcpkg_default_triplet(_t)
@@ -185,8 +207,7 @@ function(deps_install_vcpkg DEPS_JSON)
     if(NOT VCPKG_BASELINE)
         message(FATAL_ERROR
             "vcpkg requires a builtin-baseline but couldn't resolve one for "
-            "'${VCPKG_ROOT_DIR}'. Tried: `git rev-parse HEAD`, .git/HEAD, "
-            "vcpkg-bundle.json's embeddedsha.")
+            "'${VCPKG_ROOT_DIR}'.")
     endif()
 
     # 2) Build aggregate manifest from DEPS_JSON.
@@ -201,20 +222,21 @@ function(deps_install_vcpkg DEPS_JSON)
     set(_dep_entries "")
     set(_override_entries "")
     foreach(_i RANGE 0 ${_last})
+        _vcpkg_render_dep_entry("${DEPS_JSON}" ${_i} _entry)
+        list(APPEND _dep_entries "${_entry}")
+
         string(JSON _name GET "${DEPS_JSON}" dependencies ${_i} name)
-        string(JSON _ver  ERROR_VARIABLE _e GET "${DEPS_JSON}" dependencies ${_i} version)
-        list(APPEND _dep_entries "    \"${_name}\"")
-        if(NOT _e AND _ver)
+        string(JSON _ver  ERROR_VARIABLE _e_ver
+               GET "${DEPS_JSON}" dependencies ${_i} version)
+        if(NOT _e_ver AND _ver)
             list(APPEND _override_entries
                 "    { \"name\": \"${_name}\", \"version\": \"${_ver}\" }")
         endif()
     endforeach()
-    list(REMOVE_DUPLICATES _dep_entries)
     list(JOIN _dep_entries ",\n" _deps_block)
 
     set(_overrides_field "")
     if(_override_entries)
-        list(REMOVE_DUPLICATES _override_entries)
         list(JOIN _override_entries ",\n" _ovr_block)
         set(_overrides_field ",\n  \"overrides\": [\n${_ovr_block}\n  ]")
     endif()
@@ -276,5 +298,53 @@ ${_deps_block}
     endif()
 
     list(APPEND CMAKE_PREFIX_PATH "${_install_root}/${VCPKG_TARGET_TRIPLET}")
+
+    # vcpkg ports that ship CMake "Find<X>.cmake" modules (rather than full
+    # <X>Config.cmake) install them under share/<port>/. Without the vcpkg
+    # toolchain, we have to add those dirs to CMAKE_MODULE_PATH ourselves so
+    # find_package(<X>) in MODULE mode (or with fallback to MODULE) finds them.
+    # Examples: Stb, FindTBB-style ports.
+    file(GLOB_RECURSE _find_modules
+        "${_install_root}/${VCPKG_TARGET_TRIPLET}/share/Find*.cmake")
+    foreach(_fm IN LISTS _find_modules)
+        get_filename_component(_d "${_fm}" DIRECTORY)
+        list(APPEND CMAKE_MODULE_PATH "${_d}")
+    endforeach()
+    if(CMAKE_MODULE_PATH)
+        list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
+    endif()
+
+    # Mirror vcpkg's applocal-deploy: copy the installed bin/*.dll into the
+    # runtime output dir per-config, so executables find their runtime DLLs
+    # regardless of CMake's PRIVATE/PUBLIC propagation gaps in transitive
+    # link chains (which $<TARGET_RUNTIME_DLLS> doesn't fully cover for
+    # STATIC libs with PRIVATE shared imported deps). Configure-time copy;
+    # incremental builds inherit the deployed DLLs without re-doing the work.
+    get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
+    if(_is_multi)
+        set(_cfgs Debug Release RelWithDebInfo)
+    elseif(CMAKE_BUILD_TYPE)
+        set(_cfgs "${CMAKE_BUILD_TYPE}")
+    else()
+        set(_cfgs Release)
+    endif()
+    set(_rt_out "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
+    if(NOT _rt_out)
+        set(_rt_out "${CMAKE_BINARY_DIR}/bin")
+    endif()
+    foreach(_cfg IN LISTS _cfgs)
+        if(_cfg STREQUAL "Debug")
+            file(GLOB _dlls
+                "${_install_root}/${VCPKG_TARGET_TRIPLET}/debug/bin/*.dll")
+        else()
+            file(GLOB _dlls
+                "${_install_root}/${VCPKG_TARGET_TRIPLET}/bin/*.dll")
+        endif()
+        if(_dlls)
+            file(COPY ${_dlls} DESTINATION "${_rt_out}/${_cfg}")
+        endif()
+    endforeach()
+
     set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
+    set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
 endfunction()

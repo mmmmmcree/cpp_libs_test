@@ -12,6 +12,9 @@
 #
 # We still ensure a `default` profile exists, because Conan 2.x looks one up
 # as the build profile by default.
+#
+# The "features" field on dependencies.json entries is silently ignored
+# (vcpkg-only concept; Conan options are per-recipe and not equivalent).
 
 function(_conan_ensure_default_profile CONAN_EXE)
     execute_process(
@@ -33,8 +36,6 @@ function(_conan_ensure_default_profile CONAN_EXE)
     endif()
 endfunction()
 
-# Writes a Conan profile that matches the active CMake compiler.
-# Returns the profile path in OUT_PATH, or empty if compiler is unsupported.
 function(_conan_make_profile OUT_PATH)
     if(CMAKE_HOST_SYSTEM_NAME STREQUAL "Darwin")
         set(_os "Macos")
@@ -45,12 +46,7 @@ function(_conan_make_profile OUT_PATH)
     set(_lines "[settings]" "os=${_os}" "arch=x86_64")
 
     if(MSVC)
-        # Both pure cl.exe and clang-cl take this branch (clang-cl produces
-        # MSVC-ABI binaries, so Conan should also build with msvc settings).
         math(EXPR _msvc_ver "${MSVC_TOOLSET_VERSION} + 50")
-        # Clamp to the highest version commonly present in Conan's settings.yml
-        # so brand-new MSVC toolsets (e.g. VS Insiders) don't trip Conan's
-        # version validation. The actual compiler used is whatever's on PATH.
         if(_msvc_ver GREATER 194)
             set(_msvc_ver 194)
         endif()
@@ -80,9 +76,6 @@ function(_conan_make_profile OUT_PATH)
         return()
     endif()
 
-    # Mirror the project's C++ standard. Top-level CMakeLists must set
-    # CMAKE_CXX_STANDARD before install_dependencies() runs; if it doesn't,
-    # we omit cppstd and Conan falls back to its profile default.
     if(CMAKE_CXX_STANDARD)
         list(APPEND _lines "compiler.cppstd=${CMAKE_CXX_STANDARD}")
     endif()

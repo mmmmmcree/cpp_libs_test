@@ -13,10 +13,7 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake/scripts")
 include(deps)
 
-function(add_subdir PATH)
-    set_property(GLOBAL APPEND PROPERTY _PROJECT_PENDING_SUBDIRS "${PATH}")
-endfunction()
-
 add_subdir(efsw_demo)
 
 install_dependencies()
+add_pending_subdirs()
