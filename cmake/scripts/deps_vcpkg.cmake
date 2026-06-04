@@ -38,7 +38,10 @@ function(_vcpkg_locate_root OUT_VAR)
         return()
     endif()
 
-    if(WIN32)
+    # CMAKE_HOST_WIN32 (instead of WIN32): this helper may run pre-project()
+    # for the toolchain auto-setup below, and WIN32 is only set after
+    # enable_language. CMAKE_HOST_WIN32 is set unconditionally.
+    if(CMAKE_HOST_WIN32)
         foreach(_scope IN ITEMS User Machine)
             execute_process(
                 COMMAND powershell -NoProfile -ExecutionPolicy Bypass -Command
@@ -65,7 +68,7 @@ function(_vcpkg_locate_root OUT_VAR)
         return()
     endif()
 
-    if(WIN32)
+    if(CMAKE_HOST_WIN32)
         find_program(_v vcpkg.exe)
     else()
         find_program(_v vcpkg)
@@ -300,10 +303,10 @@ ${_deps_block}
     list(APPEND CMAKE_PREFIX_PATH "${_install_root}/${VCPKG_TARGET_TRIPLET}")
 
     # vcpkg ports that ship CMake "Find<X>.cmake" modules (rather than full
-    # <X>Config.cmake) install them under share/<port>/. Without the vcpkg
-    # toolchain, we have to add those dirs to CMAKE_MODULE_PATH ourselves so
-    # find_package(<X>) in MODULE mode (or with fallback to MODULE) finds them.
-    # Examples: Stb, FindTBB-style ports.
+    # <X>Config.cmake) install them under share/<port>/. The toolchain (when
+    # loaded as toolchainFile in top-level CMakeLists) handles these via its
+    # find_package wrapper, but we add to CMAKE_MODULE_PATH explicitly so the
+    # script-only path (no toolchain) still works. Examples: Stb.
     file(GLOB_RECURSE _find_modules
         "${_install_root}/${VCPKG_TARGET_TRIPLET}/share/Find*.cmake")
     foreach(_fm IN LISTS _find_modules)
@@ -314,37 +317,38 @@ ${_deps_block}
         list(REMOVE_DUPLICATES CMAKE_MODULE_PATH)
     endif()
 
-    # Mirror vcpkg's applocal-deploy: copy the installed bin/*.dll into the
-    # runtime output dir per-config, so executables find their runtime DLLs
-    # regardless of CMake's PRIVATE/PUBLIC propagation gaps in transitive
-    # link chains (which $<TARGET_RUNTIME_DLLS> doesn't fully cover for
-    # STATIC libs with PRIVATE shared imported deps). Configure-time copy;
-    # incremental builds inherit the deployed DLLs without re-doing the work.
-    get_property(_is_multi GLOBAL PROPERTY GENERATOR_IS_MULTI_CONFIG)
-    if(_is_multi)
-        set(_cfgs Debug Release RelWithDebInfo)
-    elseif(CMAKE_BUILD_TYPE)
-        set(_cfgs "${CMAKE_BUILD_TYPE}")
-    else()
-        set(_cfgs Release)
-    endif()
-    set(_rt_out "${CMAKE_RUNTIME_OUTPUT_DIRECTORY}")
-    if(NOT _rt_out)
-        set(_rt_out "${CMAKE_BINARY_DIR}/bin")
-    endif()
-    foreach(_cfg IN LISTS _cfgs)
-        if(_cfg STREQUAL "Debug")
-            file(GLOB _dlls
-                "${_install_root}/${VCPKG_TARGET_TRIPLET}/debug/bin/*.dll")
-        else()
-            file(GLOB _dlls
-                "${_install_root}/${VCPKG_TARGET_TRIPLET}/bin/*.dll")
-        endif()
-        if(_dlls)
-            file(COPY ${_dlls} DESTINATION "${_rt_out}/${_cfg}")
-        endif()
-    endforeach()
-
     set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
     set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
 endfunction()
+
+# --- Module-level: configure vcpkg's official toolchain BEFORE project() ----
+#
+# When this file is included from the top-level CMakeLists *before* project(),
+# we resolve VCPKG_ROOT, set CMAKE_TOOLCHAIN_FILE, and pin a few VCPKG_*
+# variables. The toolchain then runs automatically when project() / first
+# enable_language() fires, installing its add_executable / add_library
+# overrides for per-target applocal-deploy. Subsequent module CMakeLists
+# (called via add_pending_subdirs()) inherit those overrides automatically.
+#
+# This block keeps CMakePresets.json minimal — no toolchainFile, no VCPKG_*
+# clutter. The user only declares compiler/generator/triplet there.
+#
+# The block guards on CMAKE_TOOLCHAIN_FILE so it's a no-op on subsequent
+# configures and a no-op when an outer toolchain is already in play.
+if(NOT CMAKE_TOOLCHAIN_FILE)
+    _vcpkg_locate_root(_lcf_vcpkg_root)
+    if(_lcf_vcpkg_root AND EXISTS "${_lcf_vcpkg_root}/scripts/buildsystems/vcpkg.cmake")
+        set(CMAKE_TOOLCHAIN_FILE
+            "${_lcf_vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
+            CACHE FILEPATH "vcpkg toolchain (auto-detected by deps_vcpkg.cmake)")
+        set(VCPKG_INSTALLED_DIR    "${CMAKE_BINARY_DIR}/vcpkg_installed"
+            CACHE PATH "" FORCE)
+        # We install manually via deps_install_vcpkg(), so the toolchain
+        # must NOT auto-install from a root vcpkg.json (we don't have one).
+        set(VCPKG_MANIFEST_MODE    OFF CACHE BOOL "" FORCE)
+        set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "" FORCE)
+        # Per-target applocal-deploy is the whole reason we load the toolchain.
+        set(VCPKG_APPLOCAL_DEPS    ON  CACHE BOOL "" FORCE)
+    endif()
+    unset(_lcf_vcpkg_root)
+endif()

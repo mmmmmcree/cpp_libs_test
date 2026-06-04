@@ -9,7 +9,7 @@
       "binaryDir": "${sourceDir}/build/${presetName}",
       "cacheVariables": {
         "DEPS_BACKEND": "auto",
-        "DEPS_KEEP_SOURCES": "on"
+        "DEPS_KEEP_SOURCES": "off"
       }
     },
     {
@@ -20,7 +20,9 @@
       "generator": "Ninja Multi-Config",
       "cacheVariables": {
         "CMAKE_C_COMPILER":     "cl",
-        "CMAKE_CXX_COMPILER":   "cl"
+        "CMAKE_CXX_COMPILER":   "cl",
+        "DEPS_BACKEND": "vcpkg",
+        "DEPS_KEEP_SOURCES": "off"
       }
     },
     {
