@@ -22,9 +22,9 @@
 #        b. conan  — `conan` 2.x on PATH
 #        c. fetch  — always available (CMake FetchContent)
 
-include("${CMAKE_CURRENT_LIST_DIR}/deps_vcpkg.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/deps_conan.cmake")
-include("${CMAKE_CURRENT_LIST_DIR}/deps_fetch.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/details/specific_dependencies_environment/deps_vcpkg.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/details/specific_dependencies_environment/deps_conan.cmake")
+include("${CMAKE_CURRENT_LIST_DIR}/details/specific_dependencies_environment/deps_fetch.cmake")
 
 # When ON, the vcpkg backend forces from-source rebuilds (no binary cache)
 # and keeps extracted port sources under build/<preset>/vcpkg_installed/

@@ -17,9 +17,6 @@ set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
-# Pre-warm Threads while CMAKE_CXX_COMPILER is fresh from project(); some
-# vcpkg ports' transitive find_dependency(Threads) chokes on CMake 4.3 RC's
-# nested try_compile otherwise.
 find_package(Threads)
 
 add_subdir(efsw_demo)
