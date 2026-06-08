@@ -277,19 +277,24 @@ ${_deps_block}
         endforeach()
     endif()
 
-    # 4) Run vcpkg install. Buildtrees and packages live under the install
-    #    root for per-preset isolation; downloads stay at vcpkg's default to
-    #    keep the source-archive cache shared across presets.
+    # 4) Run vcpkg install. Default behavior: let vcpkg use its global
+    #    buildtrees/packages dirs so it can clean them up post-install (and
+    #    binary cache hits stay clean — no extracted source under build/).
+    #    With DEPS_KEEP_SOURCES=ON, pin both under the install root for
+    #    per-preset isolation and pass --no-binarycaching so the build is
+    #    forced to extract source.
     set(_install_args
         "--x-manifest-root=${_manifest_dir}"
         "--x-install-root=${_install_root}"
-        "--x-buildtrees-root=${_blds_root}"
-        "--x-packages-root=${_pkgs_root}"
         "--triplet=${VCPKG_TARGET_TRIPLET}"
         "--feature-flags=manifests,versions"
     )
     if(DEPS_KEEP_SOURCES)
-        list(APPEND _install_args "--no-binarycaching")
+        list(APPEND _install_args
+            "--x-buildtrees-root=${_blds_root}"
+            "--x-packages-root=${_pkgs_root}"
+            "--no-binarycaching"
+        )
     endif()
 
     execute_process(
@@ -321,34 +326,49 @@ ${_deps_block}
     set(CMAKE_MODULE_PATH "${CMAKE_MODULE_PATH}" PARENT_SCOPE)
 endfunction()
 
-# --- Module-level: configure vcpkg's official toolchain BEFORE project() ----
+# --- Backend interface: detect / setup ---------------------------------------
 #
-# When this file is included from the top-level CMakeLists *before* project(),
-# we resolve VCPKG_ROOT, set CMAKE_TOOLCHAIN_FILE, and pin a few VCPKG_*
-# variables. The toolchain then runs automatically when project() / first
-# enable_language() fires, installing its add_executable / add_library
-# overrides for per-target applocal-deploy. Subsequent module CMakeLists
-# (called via add_pending_subdirs()) inherit those overrides automatically.
+# deps.cmake calls _vcpkg_detect() during auto-detection, then (if vcpkg is
+# selected) calls _vcpkg_setup() exactly once *before* project(). _vcpkg_setup
+# is what installs the official toolchain via CMAKE_TOOLCHAIN_FILE so that
+# project()/enable_language() picks up vcpkg's add_executable / add_library
+# overrides — that's the per-target applocal-deploy hook the runtime needs.
 #
-# This block keeps CMakePresets.json minimal — no toolchainFile, no VCPKG_*
-# clutter. The user only declares compiler/generator/triplet there.
-#
-# The block guards on CMAKE_TOOLCHAIN_FILE so it's a no-op on subsequent
-# configures and a no-op when an outer toolchain is already in play.
-if(NOT CMAKE_TOOLCHAIN_FILE)
-    _vcpkg_locate_root(_lcf_vcpkg_root)
-    if(_lcf_vcpkg_root AND EXISTS "${_lcf_vcpkg_root}/scripts/buildsystems/vcpkg.cmake")
-        set(CMAKE_TOOLCHAIN_FILE
-            "${_lcf_vcpkg_root}/scripts/buildsystems/vcpkg.cmake"
-            CACHE FILEPATH "vcpkg toolchain (auto-detected by deps_vcpkg.cmake)")
-        set(VCPKG_INSTALLED_DIR    "${CMAKE_BINARY_DIR}/vcpkg_installed"
-            CACHE PATH "" FORCE)
-        # We install manually via deps_install_vcpkg(), so the toolchain
-        # must NOT auto-install from a root vcpkg.json (we don't have one).
-        set(VCPKG_MANIFEST_MODE    OFF CACHE BOOL "" FORCE)
-        set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "" FORCE)
-        # Per-target applocal-deploy is the whole reason we load the toolchain.
-        set(VCPKG_APPLOCAL_DEPS    ON  CACHE BOOL "" FORCE)
+# By keeping these as functions invoked from deps.cmake (instead of running at
+# module scope), we (a) avoid duplicate root-resolution between auto-detection
+# and install, and (b) keep the file pure-declaration: include order doesn't
+# trigger side effects.
+
+function(_vcpkg_detect OUT_VAR)
+    _vcpkg_locate_root(_root)
+    if(_root AND EXISTS "${_root}/scripts/buildsystems/vcpkg.cmake")
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
     endif()
-    unset(_lcf_vcpkg_root)
-endif()
+endfunction()
+
+# Pre-project hook: install vcpkg's official toolchain so project() loads it.
+# Idempotent and a no-op when an outer toolchain is already in play.
+function(_vcpkg_setup)
+    if(CMAKE_TOOLCHAIN_FILE)
+        return()
+    endif()
+    _vcpkg_locate_root(_root)
+    if(NOT _root OR NOT EXISTS "${_root}/scripts/buildsystems/vcpkg.cmake")
+        return()
+    endif()
+    set(CMAKE_TOOLCHAIN_FILE
+        "${_root}/scripts/buildsystems/vcpkg.cmake"
+        CACHE FILEPATH "vcpkg toolchain (auto-detected by deps_vcpkg.cmake)")
+    set(VCPKG_INSTALLED_DIR    "${CMAKE_BINARY_DIR}/vcpkg_installed"
+        CACHE PATH "" FORCE)
+    # We install manually via deps_install_vcpkg(), so the toolchain
+    # must NOT auto-install from a root vcpkg.json (we don't have one).
+    set(VCPKG_MANIFEST_MODE    OFF CACHE BOOL "" FORCE)
+    set(VCPKG_MANIFEST_INSTALL OFF CACHE BOOL "" FORCE)
+    # Per-target applocal-deploy is the whole reason we load the toolchain.
+    set(VCPKG_APPLOCAL_DEPS    ON  CACHE BOOL "" FORCE)
+endfunction()
+
+list(APPEND _DEPS_BACKENDS "vcpkg")

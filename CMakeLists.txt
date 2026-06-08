@@ -19,8 +19,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 
 find_package(Threads)
 
-add_subdir(efsw_demo)
-add_subdir(sdl_vulkan_demo)
+add_pending_subdir(efsw_demo)
+add_pending_subdir(sdl_vulkan_demo)
 
 install_dependencies()
-add_pending_subdirs()
+resolve_pending_subdirs()

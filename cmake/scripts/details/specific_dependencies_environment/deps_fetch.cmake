@@ -22,6 +22,15 @@ set(BUILD_TESTS      OFF CACHE BOOL "" FORCE)
 set(BUILD_TEST_APP   OFF CACHE BOOL "" FORCE)
 set(EFSW_INSTALL     OFF CACHE BOOL "" FORCE)
 
+# --- Backend interface: detect ----------------------------------------------
+#
+# FetchContent ships with CMake itself, so this backend is always available.
+# Acts as the always-on fallback in deps.cmake's auto-detection chain.
+
+function(_fetch_detect OUT_VAR)
+    set(${OUT_VAR} TRUE PARENT_SCOPE)
+endfunction()
+
 function(deps_install_fetch DEPS_JSON)
     string(JSON _len LENGTH "${DEPS_JSON}" dependencies)
     math(EXPR _last "${_len} - 1")
@@ -74,3 +83,5 @@ set(${_name}_FOUND TRUE)
         set(${_name}_DIR "${_pkg_dir}" CACHE PATH "" FORCE)
     endforeach()
 endfunction()
+
+list(APPEND _DEPS_BACKENDS "fetch")

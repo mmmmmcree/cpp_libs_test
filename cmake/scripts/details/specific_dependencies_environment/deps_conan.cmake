@@ -16,6 +16,29 @@
 # The "features" field on dependencies.json entries is silently ignored
 # (vcpkg-only concept; Conan options are per-recipe and not equivalent).
 
+# --- Backend interface: detect ----------------------------------------------
+#
+# deps.cmake calls _conan_detect() during auto-detection. Conan has no
+# pre-project setup — there's no toolchain to install — so no _conan_setup().
+
+function(_conan_detect OUT_VAR)
+    find_program(_c conan)
+    if(NOT _c)
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+        return()
+    endif()
+    execute_process(
+        COMMAND "${_c}" --version
+        OUTPUT_VARIABLE _ver ERROR_QUIET
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+    if(_ver MATCHES "Conan version 2")
+        set(${OUT_VAR} TRUE PARENT_SCOPE)
+    else()
+        set(${OUT_VAR} FALSE PARENT_SCOPE)
+    endif()
+endfunction()
+
 function(_conan_ensure_default_profile CONAN_EXE)
     execute_process(
         COMMAND ${CONAN_EXE} config home
@@ -149,3 +172,5 @@ function(deps_install_conan DEPS_JSON)
     list(APPEND CMAKE_PREFIX_PATH "${_install_dir}")
     set(CMAKE_PREFIX_PATH "${CMAKE_PREFIX_PATH}" PARENT_SCOPE)
 endfunction()
+
+list(APPEND _DEPS_BACKENDS "conan")
